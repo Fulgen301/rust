@@ -31,7 +31,7 @@ const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 const EXCEPTION_EXECUTE_HANDLER: i32 = 1;
 
 /// SEH.
-pub unsafe fn catch_seh<TR, ER, FTry, FFilter, FExcept>(
+pub unsafe fn try_seh<TR, ER, FTry, FFilter, FExcept>(
     try_fn: FTry,
     filter_fn: FFilter,
     except_fn: FExcept,
@@ -67,7 +67,7 @@ where
 
     // SAFETY:
     unsafe {
-        if intrinsics::catch_seh(
+        if intrinsics::try_seh(
             do_call::<FTry, FFilter, FExcept, TR, ER>,
             data_ptr,
             do_filter::<FTry, FFilter, FExcept, TR, ER>,

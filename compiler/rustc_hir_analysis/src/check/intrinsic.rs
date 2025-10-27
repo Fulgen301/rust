@@ -601,7 +601,7 @@ pub(crate) fn check_intrinsic_type(
             )
         }
 
-        sym::catch_seh => {
+        sym::try_seh => {
             let mut_u8 = Ty::new_mut_ptr(tcx, tcx.types.u8);
             let try_fn_ty = ty::Binder::dummy(tcx.mk_fn_sig(
                 [mut_u8],

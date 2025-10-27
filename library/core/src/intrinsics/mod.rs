@@ -2221,7 +2221,7 @@ pub unsafe fn catch_unwind(
 /// SEH. See above.
 /// Returns `1` if unwinding occurred
 #[rustc_intrinsic]
-pub unsafe fn catch_seh(
+pub unsafe fn try_seh(
     _try_fn: fn(*mut u8),
     _data: *mut u8,
     _filter_fn: unsafe fn(*mut u8, i32, *mut u8) -> i32,

@@ -326,7 +326,7 @@ pub mod random;
 pub mod range;
 pub mod result;
 #[cfg(all(target_env = "msvc", not(target_arch = "arm")))]
-#[unstable(feature = "catch_seh", issue = "999999")]
+#[unstable(feature = "try_seh", issue = "999999")]
 pub mod seh;
 pub mod sync;
 #[unstable(feature = "unsafe_binders", issue = "130516")]

@@ -245,8 +245,8 @@ impl<'ll, 'tcx> IntrinsicCallBuilderMethods<'tcx> for Builder<'_, 'll, 'tcx> {
                 );
                 return Ok(());
             }
-            sym::catch_seh => {
-                catch_seh_intrinsic(
+            sym::try_seh => {
+                try_seh_intrinsic(
                     self,
                     args[0].immediate(),
                     args[1].immediate(),
@@ -699,7 +699,7 @@ fn catch_unwind_intrinsic<'ll, 'tcx>(
     }
 }
 
-fn catch_seh_intrinsic<'ll, 'tcx>(
+fn try_seh_intrinsic<'ll, 'tcx>(
     bx: &mut Builder<'_, 'll, 'tcx>,
     try_func: &'ll Value,
     data: &'ll Value,
@@ -716,7 +716,7 @@ fn catch_seh_intrinsic<'ll, 'tcx>(
     } else if wants_msvc_seh(bx.sess()) {
         codegen_msvc_seh_try(bx, try_func, data, filter_func, except_func, dest);
     } else {
-        bug!("catch_seh needs SEH");
+        bug!("try_seh needs SEH");
     }
 }
 
