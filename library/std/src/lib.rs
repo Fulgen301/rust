@@ -541,7 +541,7 @@ pub use core::range;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use core::result;
 #[cfg(all(target_env = "msvc", not(target_arch = "arm")))]
-#[unstable(feature = "try_seh", issue = "999999")]
+#[unstable(feature = "try_seh", issue = "none")]
 pub use core::seh;
 #[stable(feature = "rust1", since = "1.0.0")]
 #[allow(deprecated, deprecated_in_future)]
