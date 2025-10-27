@@ -614,6 +614,7 @@ symbols! {
         capture_disjoint_fields,
         carrying_mul_add,
         catch_unwind,
+        catch_seh,
         cause,
         cdylib,
         ceilf16,

@@ -2218,6 +2218,16 @@ pub unsafe fn catch_unwind(
     _catch_fn: fn(*mut u8, *mut u8),
 ) -> i32;
 
+/// SEH. See above.
+/// Returns `1` if unwinding occurred
+#[rustc_intrinsic]
+pub unsafe fn catch_seh(
+    _try_fn: fn(*mut u8),
+    _data: *mut u8,
+    _filter_fn: fn(*mut u8, i32, *mut u8) -> i32,
+    _except_fn: fn(*mut u8, i32),
+) -> i32;
+
 /// Emits a `nontemporal` store, which gives a hint to the CPU that the data should not be held
 /// in cache. Except for performance, this is fully equivalent to `ptr.write(val)`.
 ///
