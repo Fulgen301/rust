@@ -1328,18 +1328,18 @@ fn get_rust_try_seh_fn<'a, 'll, 'tcx>(
             ExternAbi::Rust,
         )),
     );
-    // `unsafe fn(*mut i8, i32) -> ()`
+    // `unsafe fn(*mut i8) -> ()`
     let except_fn_ty = Ty::new_fn_ptr(
         tcx,
         ty::Binder::dummy(tcx.mk_fn_sig(
-            [i8p, tcx.types.i32],
+            [i8p],
             tcx.types.unit,
             false,
             hir::Safety::Unsafe,
             ExternAbi::Rust,
         )),
     );
-    // `unsafe fn(unsafe fn(*mut i8) -> (), *mut i8, unsafe fn(*mut i8, i32, *mut i8) -> i32, unsafe fn(*mut i8, i32) -> (), unsafe fn(*mut i8, *mut i8) -> ()) -> i32`
+    // `unsafe fn(unsafe fn(*mut i8) -> (), *mut i8, unsafe fn(*mut i8, i32, *mut i8) -> i32, unsafe fn(*mut i8) -> (), unsafe fn(*mut i8, *mut i8) -> ()) -> i32`
     let rust_fn_sig = ty::Binder::dummy(cx.tcx.mk_fn_sig(
         [try_fn_ty, i8p, filter_fn_ty, except_fn_ty],
         tcx.types.i32,

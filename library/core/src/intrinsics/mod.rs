@@ -2225,7 +2225,7 @@ pub unsafe fn catch_seh(
     _try_fn: fn(*mut u8),
     _data: *mut u8,
     _filter_fn: fn(*mut u8, i32, *mut u8) -> i32,
-    _except_fn: fn(*mut u8, i32),
+    _except_fn: fn(*mut u8),
 ) -> i32;
 
 /// Emits a `nontemporal` store, which gives a hint to the CPU that the data should not be held

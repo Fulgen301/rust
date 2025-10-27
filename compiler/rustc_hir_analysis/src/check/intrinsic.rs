@@ -618,7 +618,7 @@ pub(crate) fn check_intrinsic_type(
                 ExternAbi::Rust,
             ));
             let except_fn_ty = ty::Binder::dummy(tcx.mk_fn_sig(
-                [mut_u8, tcx.types.i32],
+                [mut_u8],
                 tcx.types.unit,
                 false,
                 hir::Safety::Safe,
