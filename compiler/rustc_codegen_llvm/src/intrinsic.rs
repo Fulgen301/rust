@@ -1339,7 +1339,7 @@ fn get_rust_try_seh_fn<'a, 'll, 'tcx>(
             ExternAbi::Rust,
         )),
     );
-    // `unsafe fn(unsafe fn(*mut i8) -> (), *mut i8, unsafe fn(*mut i8, i32, *mut i8) -> i32, unsafe fn(*mut i8) -> (), unsafe fn(*mut i8, *mut i8) -> ()) -> i32`
+    // `unsafe fn(unsafe fn(*mut i8) -> (), *mut i8, unsafe fn(*mut i8, i32, *mut i8) -> i32, unsafe fn(*mut i8) -> ()) -> i32`
     let rust_fn_sig = ty::Binder::dummy(cx.tcx.mk_fn_sig(
         [try_fn_ty, i8p, filter_fn_ty, except_fn_ty],
         tcx.types.i32,
@@ -1352,6 +1352,11 @@ fn get_rust_try_seh_fn<'a, 'll, 'tcx>(
     rust_try_seh
 }
 
+// Helper function used to declare the `__rust_try_seh_filter` function used to
+// catch SEH exceptions.
+//
+// This function needs to be declared earlier than it is built because i
+// references `__rust_try_seh`, which references `__rust_try_seh_filter`.
 fn declare_rust_try_seh_filter_fn<'a, 'll, 'tcx>(
     cx: &'a CodegenCx<'ll, 'tcx>,
 ) -> (&'ll Type, &'ll Value) {
@@ -1373,6 +1378,10 @@ fn declare_rust_try_seh_filter_fn<'a, 'll, 'tcx>(
     (llty, llfn)
 }
 
+// Helper function used to get a handle to the `__rust_try_seh_filter` function used to
+// catch SEH exceptions.
+//
+// This function is only generated once and is then cached.
 fn get_rust_try_seh_filter_fn<'a, 'll, 'tcx>(
     cx: &'a CodegenCx<'ll, 'tcx>,
     codegen: &mut dyn FnMut(Builder<'a, 'll, 'tcx>),
