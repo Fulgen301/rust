@@ -1213,7 +1213,7 @@ fn codegen_msvc_seh_try<'ll, 'tcx>(
         let data = bx.load(bx.type_ptr(), slot_data, ptr_align);
 
         let except_ty = bx.type_func(&[bx.type_ptr(), bx.type_i32()], bx.type_void());
-        bx.call(except_ty, None, None, except_func, &[data, bx.const_i32(1)], None, None);
+        bx.call(except_ty, None, None, except_func, &[data], None, None);
         bx.br(end);
 
         bx.switch_to_block(end);
