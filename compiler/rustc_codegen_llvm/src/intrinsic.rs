@@ -699,151 +699,6 @@ fn catch_unwind_intrinsic<'ll, 'tcx>(
     }
 }
 
-fn try_seh_intrinsic<'ll, 'tcx>(
-    bx: &mut Builder<'_, 'll, 'tcx>,
-    try_func: &'ll Value,
-    data: &'ll Value,
-    filter_func: &'ll Value,
-    except_func: &'ll Value,
-    dest: PlaceRef<'tcx, &'ll Value>,
-) {
-    if !bx.sess().panic_strategy().unwinds() {
-        let try_func_ty = bx.type_func(&[bx.type_ptr()], bx.type_void());
-        bx.call(try_func_ty, None, None, try_func, &[data], None, None);
-        // Return 0 unconditionally from the intrinsic call;
-        // we can never unwind.
-        OperandValue::Immediate(bx.const_i32(0)).store(bx, dest);
-    } else if wants_msvc_seh(bx.sess()) {
-        codegen_msvc_seh_try(bx, try_func, data, filter_func, except_func, dest);
-    } else {
-        bug!("try_seh needs SEH");
-    }
-}
-
-fn codegen_msvc_seh_try<'ll, 'tcx>(
-    bx: &mut Builder<'_, 'll, 'tcx>,
-    try_func: &'ll Value,
-    data: &'ll Value,
-    filter_func: &'ll Value,
-    except_func: &'ll Value,
-    dest: PlaceRef<'tcx, &'ll Value>,
-) {
-    let (llty, llfn) = get_rust_try_seh_fn(bx, &mut |mut bx| {
-        let name = "__C_specific_handler";
-        let personality_llfn = if let Some(personality_llfn) = bx.get_declared_value(name) {
-            personality_llfn
-        } else {
-            let fty = bx.type_variadic_func(&[], bx.type_i32());
-            let llfn = bx.declare_cfn(name, llvm::UnnamedAddr::Global, fty);
-            bx.apply_target_cpu_attr(llfn);
-            llfn
-        };
-
-        bx.set_personality_fn(personality_llfn);
-
-        let entry_block = bx.llbb();
-        let catchswitch = bx.append_sibling_block("catchswitch");
-        let catchpad = bx.append_sibling_block("catchpad");
-        let caught = bx.append_sibling_block("caught");
-        let end = bx.append_sibling_block("end");
-
-        let try_func = llvm::get_param(bx.llfn(), 0);
-        let data = llvm::get_param(bx.llfn(), 1);
-        let except_func = llvm::get_param(bx.llfn(), 3);
-
-        // extern "C" int __rust_try_seh(
-        //     void(*try_func)(void *),
-        //     void *data,
-        //     int (*filter_func)(void *, int, void *) noexcept,
-        //     void (*except_func)(void *, int) noexcept
-        // ) {
-        //     __try {
-        //         try_func(data);
-        //         return 0;
-        //     }
-        //     __except(filter_func(data, _exception_code(), _exception_info()))
-        //     {
-        //         except_func(data, 1);
-        //     }
-
-        //     return 1;
-        // }
-
-        let ptr_size = bx.tcx().data_layout.pointer_size();
-        let ptr_align = bx.tcx().data_layout.pointer_align().abi;
-        let slot_filter_func = bx.alloca(ptr_size, ptr_align);
-        let slot_data = bx.alloca(ptr_size, ptr_align);
-
-        // Needed for filter func
-        bx.call_intrinsic("llvm.localescape", &[], &[slot_filter_func, slot_data]);
-
-        bx.store(filter_func, slot_filter_func, ptr_align);
-        bx.store(data, slot_data, ptr_align);
-
-        let try_func_ty = bx.type_func(&[bx.type_ptr()], bx.type_void());
-        bx.invoke(try_func_ty, None, None, try_func, &[data], end, catchswitch, None, None);
-
-        bx.switch_to_block(catchswitch);
-        let cs = bx.catch_switch(None, None, &[catchpad]);
-
-        bx.switch_to_block(catchpad);
-
-        let (_filter_llty, filter_llfn) = declare_rust_try_seh_filter_fn(&*bx);
-        let funclet = bx.catch_pad(cs, &[filter_llfn]);
-        bx.catch_ret(&funclet, caught);
-
-        bx.switch_to_block(caught);
-        bx.call_intrinsic("llvm.eh.exceptioncode", &[], &[funclet.cleanuppad()]);
-        let data = bx.load(bx.type_ptr(), slot_data, ptr_align);
-
-        let except_ty = bx.type_func(&[bx.type_ptr(), bx.type_i32()], bx.type_void());
-        bx.call(except_ty, None, None, except_func, &[data, bx.const_i32(1)], None, None);
-        bx.br(end);
-
-        bx.switch_to_block(end);
-        let phi =
-            bx.phi(bx.type_i32(), &[bx.const_i32(1), bx.const_i32(0)], &[caught, entry_block]);
-        bx.ret(phi);
-    });
-
-    let (_filter_llty, _filter_llfn) = get_rust_try_seh_filter_fn(bx, &mut |mut bx| {
-        let exception_info = llvm::get_param(bx.llfn(), 0);
-        let ptr2 = llvm::get_param(bx.llfn(), 1);
-
-        let frame = bx.call_intrinsic("llvm.eh.recoverfp", &[], &[llfn, ptr2]);
-        let filter_func_ptr =
-            bx.call_intrinsic("llvm.localrecover", &[], &[llfn, frame, bx.const_i32(0)]);
-        let data_ptr = bx.call_intrinsic("llvm.localrecover", &[], &[llfn, frame, bx.const_i32(1)]);
-
-        let ptr_align = bx.tcx().data_layout.pointer_align().abi;
-
-        let exception_info_load = bx.load(bx.type_ptr(), exception_info, ptr_align);
-        let exception_code =
-            bx.load(bx.type_i32(), exception_info_load, Align::from_bytes(4).unwrap());
-        let filter_func = bx.load(bx.type_ptr(), filter_func_ptr, ptr_align);
-        let data = bx.load(bx.type_ptr(), data_ptr, ptr_align);
-
-        let filter_func_ty =
-            bx.type_func(&[bx.type_ptr(), bx.type_i32(), bx.type_ptr()], bx.type_i32());
-        let result = bx.call(
-            filter_func_ty,
-            None,
-            None,
-            filter_func,
-            &[data, exception_code, exception_info],
-            None,
-            None,
-        );
-        bx.ret(result);
-    });
-
-    // Note that no invoke is used here because by definition this function
-    // can't panic.
-    let ret =
-        bx.call(llty, None, None, llfn, &[try_func, data, filter_func, except_func], None, None);
-    OperandValue::Immediate(ret).store(bx, dest);
-}
-
 // MSVC's definition of the `rust_try` function.
 //
 // This implementation uses the new exception handling instructions in LLVM
@@ -1217,6 +1072,151 @@ fn codegen_emcc_try<'ll, 'tcx>(
     // Note that no invoke is used here because by definition this function
     // can't panic (that's what it's catching).
     let ret = bx.call(llty, None, None, llfn, &[try_func, data, catch_func], None, None);
+    OperandValue::Immediate(ret).store(bx, dest);
+}
+
+fn try_seh_intrinsic<'ll, 'tcx>(
+    bx: &mut Builder<'_, 'll, 'tcx>,
+    try_func: &'ll Value,
+    data: &'ll Value,
+    filter_func: &'ll Value,
+    except_func: &'ll Value,
+    dest: PlaceRef<'tcx, &'ll Value>,
+) {
+    if !bx.sess().panic_strategy().unwinds() {
+        let try_func_ty = bx.type_func(&[bx.type_ptr()], bx.type_void());
+        bx.call(try_func_ty, None, None, try_func, &[data], None, None);
+        // Return 0 unconditionally from the intrinsic call;
+        // we can never unwind.
+        OperandValue::Immediate(bx.const_i32(0)).store(bx, dest);
+    } else if wants_msvc_seh(bx.sess()) {
+        codegen_msvc_seh_try(bx, try_func, data, filter_func, except_func, dest);
+    } else {
+        bug!("try_seh needs SEH");
+    }
+}
+
+fn codegen_msvc_seh_try<'ll, 'tcx>(
+    bx: &mut Builder<'_, 'll, 'tcx>,
+    try_func: &'ll Value,
+    data: &'ll Value,
+    filter_func: &'ll Value,
+    except_func: &'ll Value,
+    dest: PlaceRef<'tcx, &'ll Value>,
+) {
+    let (llty, llfn) = get_rust_try_seh_fn(bx, &mut |mut bx| {
+        let name = "__C_specific_handler";
+        let personality_llfn = if let Some(personality_llfn) = bx.get_declared_value(name) {
+            personality_llfn
+        } else {
+            let fty = bx.type_variadic_func(&[], bx.type_i32());
+            let llfn = bx.declare_cfn(name, llvm::UnnamedAddr::Global, fty);
+            bx.apply_target_cpu_attr(llfn);
+            llfn
+        };
+
+        bx.set_personality_fn(personality_llfn);
+
+        let entry_block = bx.llbb();
+        let catchswitch = bx.append_sibling_block("catchswitch");
+        let catchpad = bx.append_sibling_block("catchpad");
+        let caught = bx.append_sibling_block("caught");
+        let end = bx.append_sibling_block("end");
+
+        let try_func = llvm::get_param(bx.llfn(), 0);
+        let data = llvm::get_param(bx.llfn(), 1);
+        let except_func = llvm::get_param(bx.llfn(), 3);
+
+        // extern "C" int __rust_try_seh(
+        //     void(*try_func)(void *),
+        //     void *data,
+        //     int (*filter_func)(void *, int, void *) noexcept,
+        //     void (*except_func)(void *, int) noexcept
+        // ) {
+        //     __try {
+        //         try_func(data);
+        //         return 0;
+        //     }
+        //     __except(filter_func(data, _exception_code(), _exception_info()))
+        //     {
+        //         except_func(data, 1);
+        //     }
+
+        //     return 1;
+        // }
+
+        let ptr_size = bx.tcx().data_layout.pointer_size();
+        let ptr_align = bx.tcx().data_layout.pointer_align().abi;
+        let slot_filter_func = bx.alloca(ptr_size, ptr_align);
+        let slot_data = bx.alloca(ptr_size, ptr_align);
+
+        // Needed for filter func
+        bx.call_intrinsic("llvm.localescape", &[], &[slot_filter_func, slot_data]);
+
+        bx.store(filter_func, slot_filter_func, ptr_align);
+        bx.store(data, slot_data, ptr_align);
+
+        let try_func_ty = bx.type_func(&[bx.type_ptr()], bx.type_void());
+        bx.invoke(try_func_ty, None, None, try_func, &[data], end, catchswitch, None, None);
+
+        bx.switch_to_block(catchswitch);
+        let cs = bx.catch_switch(None, None, &[catchpad]);
+
+        bx.switch_to_block(catchpad);
+
+        let (_filter_llty, filter_llfn) = declare_rust_try_seh_filter_fn(&*bx);
+        let funclet = bx.catch_pad(cs, &[filter_llfn]);
+        bx.catch_ret(&funclet, caught);
+
+        bx.switch_to_block(caught);
+        bx.call_intrinsic("llvm.eh.exceptioncode", &[], &[funclet.cleanuppad()]);
+        let data = bx.load(bx.type_ptr(), slot_data, ptr_align);
+
+        let except_ty = bx.type_func(&[bx.type_ptr(), bx.type_i32()], bx.type_void());
+        bx.call(except_ty, None, None, except_func, &[data, bx.const_i32(1)], None, None);
+        bx.br(end);
+
+        bx.switch_to_block(end);
+        let phi =
+            bx.phi(bx.type_i32(), &[bx.const_i32(1), bx.const_i32(0)], &[caught, entry_block]);
+        bx.ret(phi);
+    });
+
+    let (_filter_llty, _filter_llfn) = get_rust_try_seh_filter_fn(bx, &mut |mut bx| {
+        let exception_info = llvm::get_param(bx.llfn(), 0);
+        let ptr2 = llvm::get_param(bx.llfn(), 1);
+
+        let frame = bx.call_intrinsic("llvm.eh.recoverfp", &[], &[llfn, ptr2]);
+        let filter_func_ptr =
+            bx.call_intrinsic("llvm.localrecover", &[], &[llfn, frame, bx.const_i32(0)]);
+        let data_ptr = bx.call_intrinsic("llvm.localrecover", &[], &[llfn, frame, bx.const_i32(1)]);
+
+        let ptr_align = bx.tcx().data_layout.pointer_align().abi;
+
+        let exception_info_load = bx.load(bx.type_ptr(), exception_info, ptr_align);
+        let exception_code =
+            bx.load(bx.type_i32(), exception_info_load, Align::from_bytes(4).unwrap());
+        let filter_func = bx.load(bx.type_ptr(), filter_func_ptr, ptr_align);
+        let data = bx.load(bx.type_ptr(), data_ptr, ptr_align);
+
+        let filter_func_ty =
+            bx.type_func(&[bx.type_ptr(), bx.type_i32(), bx.type_ptr()], bx.type_i32());
+        let result = bx.call(
+            filter_func_ty,
+            None,
+            None,
+            filter_func,
+            &[data, exception_code, exception_info],
+            None,
+            None,
+        );
+        bx.ret(result);
+    });
+
+    // Note that no invoke is used here because by definition this function
+    // can't panic.
+    let ret =
+        bx.call(llty, None, None, llfn, &[try_func, data, filter_func, except_func], None, None);
     OperandValue::Immediate(ret).store(bx, dest);
 }
 
