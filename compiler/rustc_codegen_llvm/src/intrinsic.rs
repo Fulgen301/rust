@@ -1223,19 +1223,19 @@ fn codegen_msvc_seh_try<'ll, 'tcx>(
     });
 
     let (_filter_llty, _filter_llfn) = get_rust_try_seh_filter_fn(bx, &mut |mut bx| {
-        let exception_info = llvm::get_param(bx.llfn(), 0);
-        let ptr2 = llvm::get_param(bx.llfn(), 1);
+        let exception_pointers = llvm::get_param(bx.llfn(), 0);
+        let frame_ptr = llvm::get_param(bx.llfn(), 1);
 
-        let frame = bx.call_intrinsic("llvm.eh.recoverfp", &[], &[llfn, ptr2]);
+        let frame = bx.call_intrinsic("llvm.eh.recoverfp", &[], &[llfn, frame_ptr]);
         let filter_func_ptr =
             bx.call_intrinsic("llvm.localrecover", &[], &[llfn, frame, bx.const_i32(0)]);
         let data_ptr = bx.call_intrinsic("llvm.localrecover", &[], &[llfn, frame, bx.const_i32(1)]);
 
         let ptr_align = bx.tcx().data_layout.pointer_align().abi;
 
-        let exception_info_load = bx.load(bx.type_ptr(), exception_info, ptr_align);
+        let exception_record = bx.load(bx.type_ptr(), exception_pointers, ptr_align);
         let exception_code =
-            bx.load(bx.type_i32(), exception_info_load, Align::from_bytes(4).unwrap());
+            bx.load(bx.type_i32(), exception_record, Align::from_bytes(4).unwrap());
         let filter_func = bx.load(bx.type_ptr(), filter_func_ptr, ptr_align);
         let data = bx.load(bx.type_ptr(), data_ptr, ptr_align);
 
@@ -1246,7 +1246,7 @@ fn codegen_msvc_seh_try<'ll, 'tcx>(
             None,
             None,
             filter_func,
-            &[data, exception_code, exception_info],
+            &[data, exception_code, exception_pointers],
             None,
             None,
         );
