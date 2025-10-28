@@ -1127,22 +1127,62 @@ fn codegen_msvc_seh_try<'ll, 'tcx>(
         let data = llvm::get_param(bx.llfn(), 1);
         let except_func = llvm::get_param(bx.llfn(), 3);
 
-        // extern "C" int __rust_try_seh(
-        //     void(*try_func)(void *),
-        //     void *data,
-        //     int (*filter_func)(void *, int, void *) noexcept,
-        //     void (*except_func)(void *, int) noexcept
-        // ) {
-        //     __try {
-        //         try_func(data);
-        //         return 0;
-        //     }
-        //     __except(filter_func(data, _exception_code(), _exception_info()))
-        //     {
-        //         except_func(data, 1);
-        //     }
-
-        //     return 1;
+        // We're generating an IR snippet that looks like:
+        //
+        //   declare i32 @__rust_try_seh(%try_func, %data, %filter_func, %except_func) {
+        //   entry-block:
+        //      %slot_filter_func = alloca i8*
+        //      %slot_data = alloca i8*
+        //      call void  (...) @llvm.localescape(%slot_filter_func, %slot_data)
+        //      store ptr %filter_func, ptr %slot_filter_func, align 8
+        //      store ptr %data, ptr %slot_data, align 8
+        //      invoke %try_func(%data) to label %end unwind label %catchswitch
+        //
+        //   catchswitch:
+        //      %cs = catchswitch within none [label %catchpad] unwind to caller
+        //
+        //   catchpad:
+        //      %tok = catchpad within %catchswitch1 [ptr @"?filt$0@0@__rust_try_seh@@"]
+        //      catchret from %tok to label %caught
+        //
+        //   caught:
+        //      %tok = catchpad within %cs [null, 64, null]
+        //      call %except_func(%data)
+        //      br label %end
+        //
+        //   end:
+        //      %ret = phi i32 [ 1, %caught ], [ 0, %entry-block ]
+        //      ret i32 %ret
+        //   }
+        //   declare i32 @"?filt$0@0@__rust_try_seh@@"(ptr %exception_pointers, ptr %frame_ptr) {
+        //      %frame = call ptr @llvm.eh.recoverfp(ptr @__rust_try_seh, ptr %1)
+        //      %slot_filter_func = call ptr @llvm.localrecover(ptr @__rust_try_seh, ptr %frame, i32 0)
+        //      %slot_data = call ptr @llvm.localrecover(ptr @__rust_try_seh, ptr %frame, i32 1)
+        //      %exception_record = load ptr, ptr %exception_pointers, align 8
+        //      %exception_code = load i32, ptr %exception_record, align 4
+        //      %filter_func = load ptr, ptr %slot_filter_func, align 8
+        //      %data = load ptr, ptr %slot_data, align 8
+        //      %ret = call i32 %filter_func(ptr %data, i32 %exception_code, ptr %exception_pointers)
+        //      ret i32 %ret
+        //   }
+        //
+        // This structure follows the basic usage of __try/__filter/__except in LLVM.
+        // For example, compile this C snippet to see what LLVM generates:
+        //
+        //      extern "C" int __rust_try_seh(
+        //          void(*try_func)(void *),
+        //          void *data,
+        //          int (*filter_func)(void *, int, void *) noexcept,
+        //          void (*except_func)(void *) noexcept
+        //      ) {
+        //          __try {
+        //              try_func(data);
+        //              return 0;
+        //          }
+        //          __except(filter_func(data, _exception_code(), _exception_info())) {
+        //              except_func(data);
+        //          }
+        //          return 1;
         // }
 
         let ptr_size = bx.tcx().data_layout.pointer_size();
