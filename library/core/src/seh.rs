@@ -10,7 +10,7 @@ pub struct ExceptionInformation(*mut u8);
 
 impl ExceptionInformation {
     /// Get the raw pointer to the exception information.
-    pub fn as_raw(self) -> *mut u8 {
+    pub fn as_raw(&self) -> *mut u8 {
         self.0
     }
 }
@@ -38,7 +38,7 @@ pub unsafe fn try_seh<TR, ER, FTry, FFilter, FExcept>(
 ) -> Result<TR, ER>
 where
     FTry: FnOnce() -> TR,
-    FFilter: Fn(i32, ExceptionInformation) -> FilterResult,
+    for<'a> FFilter: (Fn(i32, &'a ExceptionInformation) -> FilterResult) + 'a,
     FExcept: FnOnce() -> ER,
 {
     struct Data<FTry, FFilter, FExcept, TR, ER> {
@@ -84,7 +84,7 @@ where
     fn do_call<FTry, FFilter, FExcept, TR, ER>(data: *mut u8)
     where
         FTry: FnOnce() -> TR,
-        FFilter: Fn(i32, ExceptionInformation) -> FilterResult,
+        for<'a> FFilter: Fn(i32, &'a ExceptionInformation) -> FilterResult,
         FExcept: FnOnce() -> ER,
     {
         // SAFETY: this is the responsibility of the caller, see above.
@@ -106,7 +106,7 @@ where
     ) -> i32
     where
         FTry: FnOnce() -> TR,
-        FFilter: Fn(i32, ExceptionInformation) -> FilterResult,
+        for<'a> FFilter: Fn(i32, &'a ExceptionInformation) -> FilterResult,
         FExcept: FnOnce() -> ER,
     {
         // SAFETY: this is the responsibility of the caller, see above.
@@ -114,7 +114,7 @@ where
             let data = data.cast::<Data<FTry, FFilter, FExcept, TR, ER>>();
             let data = &mut *data;
 
-            match (data.filter_fn)(code, ExceptionInformation(exception_information)) {
+            match (data.filter_fn)(code, &ExceptionInformation(exception_information)) {
                 FilterResult::ContinueExecution => EXCEPTION_CONTINUE_EXECUTION,
                 FilterResult::ContinueSearch => {
                     // except_fn will not be executed, so we need to drop it.
@@ -136,7 +136,7 @@ where
     fn do_except<FTry, FFilter, FExcept, TR, ER>(data: *mut u8)
     where
         FTry: FnOnce() -> TR,
-        FFilter: Fn(i32, ExceptionInformation) -> FilterResult,
+        for<'a> FFilter: Fn(i32, &'a ExceptionInformation) -> FilterResult,
         FExcept: FnOnce() -> ER,
     {
         // SAFETY: this is the responsibility of the caller, see above.
