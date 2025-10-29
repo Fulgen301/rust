@@ -867,19 +867,23 @@ impl<'ll, 'tcx> MiscCodegenMethods<'tcx> for CodegenCx<'ll, 'tcx> {
             )),
             _ => {
                 let name = name.unwrap_or("rust_eh_personality");
-                if let Some(llfn) = self.get_declared_value(name) {
-                    llfn
-                } else {
-                    let fty = self.type_variadic_func(&[], self.type_i32());
-                    let llfn = self.declare_cfn(name, llvm::UnnamedAddr::Global, fty);
-                    let target_cpu = attributes::target_cpu_attr(self, self.sess());
-                    attributes::apply_to_llfn(llfn, llvm::AttributePlace::Function, &[target_cpu]);
-                    llfn
-                }
+                self.eh_personality_by_name(name)
             }
         };
         self.eh_personality.set(Some(llfn));
         llfn
+    }
+
+    fn eh_personality_by_name(&self, name: &str) -> Self::Function {
+        if let Some(llfn) = self.get_declared_value(name) {
+            llfn
+        } else {
+            let fty = self.type_variadic_func(&[], self.type_i32());
+            let llfn = self.declare_cfn(name, llvm::UnnamedAddr::Global, fty);
+            let target_cpu = attributes::target_cpu_attr(self, self.sess());
+            attributes::apply_to_llfn(llfn, llvm::AttributePlace::Function, &[target_cpu]);
+            llfn
+        }
     }
 
     fn sess(&self) -> &Session {

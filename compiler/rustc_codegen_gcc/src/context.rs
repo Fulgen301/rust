@@ -463,12 +463,16 @@ impl<'gcc, 'tcx> MiscCodegenMethods<'tcx> for CodegenCx<'gcc, 'tcx> {
                 } else {
                     "rust_eh_personality"
                 };
-                self.declare_func(name, self.type_i32(), &[], true)
+                self.eh_personality_by_name(name)
             }
         };
         // TODO(antoyo): apply target cpu attributes.
         self.eh_personality.set(Some(func));
         func
+    }
+
+    fn eh_personality_by_name(&self, name: &str) -> Self::Function {
+        self.declare_func(name, self.type_i32(), &[], true)
     }
 
     fn sess(&self) -> &Session {

@@ -1105,17 +1105,7 @@ fn codegen_msvc_seh_try<'ll, 'tcx>(
     dest: PlaceRef<'tcx, &'ll Value>,
 ) {
     let (llty, llfn) = get_rust_try_seh_fn(bx, &mut |mut bx| {
-        let name = "__C_specific_handler";
-        let personality_llfn = if let Some(personality_llfn) = bx.get_declared_value(name) {
-            personality_llfn
-        } else {
-            let fty = bx.type_variadic_func(&[], bx.type_i32());
-            let llfn = bx.declare_cfn(name, llvm::UnnamedAddr::Global, fty);
-            bx.apply_target_cpu_attr(llfn);
-            llfn
-        };
-
-        bx.set_personality_fn(personality_llfn);
+        bx.set_personality_fn(bx.eh_personality_by_name("__C_specific_handler"));
 
         let entry_block = bx.llbb();
         let catchswitch = bx.append_sibling_block("catchswitch");
