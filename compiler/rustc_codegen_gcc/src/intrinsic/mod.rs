@@ -399,6 +399,9 @@ impl<'a, 'gcc, 'tcx> IntrinsicCallBuilderMethods<'tcx> for Builder<'a, 'gcc, 'tc
             sym::try_seh => {
                 unimplemented();
             }
+            sym::try_seh_finally => {
+                unimplemented!();
+            }
             sym::breakpoint => {
                 unimplemented!();
             }

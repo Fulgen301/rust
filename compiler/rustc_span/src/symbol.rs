@@ -615,6 +615,7 @@ symbols! {
         carrying_mul_add,
         catch_unwind,
         try_seh,
+        try_seh_finally,
         cause,
         cdylib,
         ceilf16,

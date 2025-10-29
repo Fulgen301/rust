@@ -2228,6 +2228,14 @@ pub unsafe fn try_seh(
     _except_fn: unsafe fn(*mut u8),
 ) -> i32;
 
+/// SEH.
+#[rustc_intrinsic]
+pub unsafe fn try_seh_finally(
+    _try_fn: fn(*mut u8),
+    _data: *mut u8,
+    _finally_fn: unsafe fn(*mut u8, i32),
+);
+
 /// Emits a `nontemporal` store, which gives a hint to the CPU that the data should not be held
 /// in cache. Except for performance, this is fully equivalent to `ptr.write(val)`.
 ///

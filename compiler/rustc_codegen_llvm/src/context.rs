@@ -135,6 +135,7 @@ pub(crate) struct FullCx<'ll, 'tcx> {
     pub rust_try_fn: Cell<Option<(&'ll Type, &'ll Value)>>,
     pub rust_try_seh_fn: Cell<Option<(&'ll Type, &'ll Value)>>,
     pub rust_try_seh_filter_fn: Cell<Option<(&'ll Type, &'ll Value)>>,
+    pub rust_try_seh_finally_fn: Cell<Option<(&'ll Type, &'ll Value)>>,
 
     intrinsics:
         RefCell<FxHashMap<(Cow<'static, str>, SmallVec<[&'ll Type; 2]>), (&'ll Type, &'ll Value)>>,
@@ -635,6 +636,7 @@ impl<'ll, 'tcx> CodegenCx<'ll, 'tcx> {
                 rust_try_fn: Cell::new(None),
                 rust_try_seh_fn: Cell::new(None),
                 rust_try_seh_filter_fn: Cell::new(None),
+                rust_try_seh_finally_fn: Cell::new(None),
                 intrinsics: Default::default(),
                 local_gen_sym_counter: Cell::new(0),
                 renamed_statics: Default::default(),

@@ -637,6 +637,30 @@ pub(crate) fn check_intrinsic_type(
             )
         }
 
+        sym::try_seh_finally => {
+            let mut_u8 = Ty::new_mut_ptr(tcx, tcx.types.u8);
+            let try_fn_ty = ty::Binder::dummy(tcx.mk_fn_sig(
+                [mut_u8],
+                tcx.types.unit,
+                false,
+                hir::Safety::Safe,
+                ExternAbi::Rust,
+            ));
+            let finally_fn_ty = ty::Binder::dummy(tcx.mk_fn_sig(
+                [mut_u8, tcx.types.i32],
+                tcx.types.unit,
+                false,
+                hir::Safety::Unsafe,
+                ExternAbi::Rust,
+            ));
+            (
+                0,
+                0,
+                vec![Ty::new_fn_ptr(tcx, try_fn_ty), mut_u8, Ty::new_fn_ptr(tcx, finally_fn_ty)],
+                tcx.types.unit,
+            )
+        }
+
         sym::va_start | sym::va_end => {
             (0, 0, vec![mk_va_list_ty(hir::Mutability::Mut).0], tcx.types.unit)
         }

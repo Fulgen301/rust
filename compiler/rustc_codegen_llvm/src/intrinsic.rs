@@ -23,6 +23,7 @@ use tracing::debug;
 use crate::abi::FnAbiLlvmExt;
 use crate::builder::Builder;
 use crate::builder::autodiff::{adjust_activity_to_abi, generate_enzyme_call};
+use crate::common::Funclet;
 use crate::context::CodegenCx;
 use crate::errors::AutoDiffWithoutEnable;
 use crate::llvm::{self, Metadata, Type, Value};
@@ -253,6 +254,15 @@ impl<'ll, 'tcx> IntrinsicCallBuilderMethods<'tcx> for Builder<'_, 'll, 'tcx> {
                     args[2].immediate(),
                     args[3].immediate(),
                     result,
+                );
+                return Ok(());
+            }
+            sym::try_seh_finally => {
+                try_seh_finally_intrinsic(
+                    self,
+                    args[0].immediate(),
+                    args[1].immediate(),
+                    args[2].immediate(),
                 );
                 return Ok(());
             }
@@ -1096,6 +1106,19 @@ fn try_seh_intrinsic<'ll, 'tcx>(
     }
 }
 
+fn try_seh_finally_intrinsic<'ll, 'tcx>(
+    bx: &mut Builder<'_, 'll, 'tcx>,
+    try_func: &'ll Value,
+    data: &'ll Value,
+    finally_func: &'ll Value,
+) {
+    if wants_msvc_seh(bx.sess()) {
+        codegen_msvc_seh_try_finally(bx, try_func, data, finally_func);
+    } else {
+        bug!("try_seh_finally needs SEH");
+    }
+}
+
 fn codegen_msvc_seh_try<'ll, 'tcx>(
     bx: &mut Builder<'_, 'll, 'tcx>,
     try_func: &'ll Value,
@@ -1248,6 +1271,82 @@ fn codegen_msvc_seh_try<'ll, 'tcx>(
     let ret =
         bx.call(llty, None, None, llfn, &[try_func, data, filter_func, except_func], None, None);
     OperandValue::Immediate(ret).store(bx, dest);
+}
+
+fn codegen_msvc_seh_try_finally<'ll, 'tcx>(
+    bx: &mut Builder<'_, 'll, 'tcx>,
+    try_func: &'ll Value,
+    data: &'ll Value,
+    finally_func: &'ll Value,
+) {
+    let (llty, llfn) = get_rust_try_seh_finally_fn(bx, &mut |mut bx| {
+        bx.set_personality_fn(bx.eh_personality_by_name("__C_specific_handler"));
+
+        let normal = bx.append_sibling_block("normal");
+        let caught = bx.append_sibling_block("caught");
+
+        let try_func = llvm::get_param(bx.llfn(), 0);
+        let data = llvm::get_param(bx.llfn(), 1);
+        let finally_func = llvm::get_param(bx.llfn(), 2);
+
+        let ptr_size = bx.tcx().data_layout.pointer_size();
+        let ptr_align = bx.tcx().data_layout.pointer_align().abi;
+        let slot_finally_func = bx.alloca(ptr_size, ptr_align);
+        let slot_data = bx.alloca(ptr_size, ptr_align);
+
+        // Needed for finally func
+        bx.call_intrinsic("llvm.localescape", &[], &[slot_finally_func, slot_data]);
+
+        bx.store(finally_func, slot_finally_func, ptr_align);
+        bx.store(data, slot_data, ptr_align);
+
+        let try_func_ty = bx.type_func(&[bx.type_ptr()], bx.type_void());
+        bx.invoke(try_func_ty, None, None, try_func, &[data], normal, caught, None, None);
+
+        fn codegen_finally_block_part<'ll, 'tcx>(
+            bx: &mut Builder<'_, 'll, 'tcx>,
+            ptr_align: Align,
+            abnormal_termination: bool,
+            funclet: Option<&Funclet<'ll>>,
+        ) {
+            let local_address = bx.call_intrinsic("llvm.localaddress", &[], &[]);
+            let finally_func_ptr = bx.call_intrinsic(
+                "llvm.localrecover",
+                &[],
+                &[bx.llfn(), local_address, bx.const_i32(0)],
+            );
+            let data_ptr = bx.call_intrinsic(
+                "llvm.localrecover",
+                &[],
+                &[bx.llfn(), local_address, bx.const_i32(1)],
+            );
+            let finally_func = bx.load(bx.type_ptr(), finally_func_ptr, ptr_align);
+            let data = bx.load(bx.type_ptr(), data_ptr, ptr_align);
+
+            let finally_func_ty = bx.type_func(&[bx.type_ptr(), bx.type_i32()], bx.type_void());
+
+            bx.call(
+                finally_func_ty,
+                None,
+                None,
+                finally_func,
+                &[data, bx.const_i32(if abnormal_termination { 1 } else { 0 })],
+                funclet,
+                None,
+            );
+        }
+
+        bx.switch_to_block(normal);
+        codegen_finally_block_part(&mut bx, ptr_align, false, None);
+        bx.ret_void();
+
+        bx.switch_to_block(caught);
+        let funclet = bx.cleanup_pad(None, &[]);
+        codegen_finally_block_part(&mut bx, ptr_align, true, Some(&funclet));
+        bx.cleanup_ret(&funclet, None);
+    });
+
+    bx.call(llty, None, None, llfn, &[try_func, data, finally_func], None, None);
 }
 
 // Helper function to give a Block to a closure to codegen a shim function.
@@ -1434,6 +1533,56 @@ fn get_rust_try_seh_filter_fn<'a, 'll, 'tcx>(
     let rust_try_seh_filter_fn = gen_fn(cx, "?filt$0@0@__rust_try_seh@@", rust_fn_sig, codegen);
     cx.rust_try_seh_filter_fn.set(Some(rust_try_seh_filter_fn));
     rust_try_seh_filter_fn
+}
+
+// Helper function used to get a handle to the `__rust_try_seh_finally` function used to
+// call a SEH termination handler.
+//
+// This function is only generated once and is then cached.
+fn get_rust_try_seh_finally_fn<'a, 'll, 'tcx>(
+    cx: &'a CodegenCx<'ll, 'tcx>,
+    codegen: &mut dyn FnMut(Builder<'a, 'll, 'tcx>),
+) -> (&'ll Type, &'ll Value) {
+    if let Some(llfn) = cx.rust_try_seh_finally_fn.get() {
+        return llfn;
+    }
+
+    // Define the type up front for the signature of the rust_try_seh_filter function.
+    let tcx = cx.tcx;
+    let i8p = Ty::new_mut_ptr(tcx, tcx.types.i8);
+    // `unsafe fn(*mut i8) -> ()`
+    let try_fn_ty = Ty::new_fn_ptr(
+        tcx,
+        ty::Binder::dummy(tcx.mk_fn_sig(
+            [i8p],
+            tcx.types.unit,
+            false,
+            hir::Safety::Unsafe,
+            ExternAbi::Rust,
+        )),
+    );
+    // `unsafe fn(*mut i8, i32) -> ()`
+    let finally_fn_ty = Ty::new_fn_ptr(
+        tcx,
+        ty::Binder::dummy(tcx.mk_fn_sig(
+            [i8p, tcx.types.i32],
+            tcx.types.unit,
+            false,
+            hir::Safety::Unsafe,
+            ExternAbi::Rust,
+        )),
+    );
+    // `unsafe fn(unsafe fn(*mut i8) -> (), *mut i8, unsafe fn(*mut i8, i328) -> ())) -> ()`
+    let rust_fn_sig = ty::Binder::dummy(cx.tcx.mk_fn_sig(
+        [try_fn_ty, i8p, finally_fn_ty],
+        tcx.types.unit,
+        false,
+        hir::Safety::Unsafe,
+        ExternAbi::Rust,
+    ));
+    let rust_try_seh_finally_fn = gen_fn(cx, "__rust_try_seh_finally", rust_fn_sig, codegen);
+    cx.rust_try_seh_finally_fn.set(Some(rust_try_seh_finally_fn));
+    rust_try_seh_finally_fn
 }
 
 fn codegen_autodiff<'ll, 'tcx>(
